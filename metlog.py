@@ -67,7 +67,7 @@ class MetLog:
 
         # Upload to server every 15 minutes
         if gt.tm_min % 1 == 0:
-            requests.put(METSERVE, json={'temp': temp,
+            requests.put(METCLOUD, json={'temp': temp,
                                          'wind': wind,
                                          'gust': self.max_gust})
             self.max_gust = gust
