@@ -1,0 +1,14 @@
+[Unit]
+Description="Metlog service"
+After=network.target
+
+[Service]
+User=ahs
+Group=ahs
+RuntimeDirectory=metlog
+WorkingDirectory=/home/ahs/src/metlog
+ExecStart=/home/ahs/src/metlog/venv/bin/python metlog.py metsensor.lan /var/metlog/metlog.db
+
+[Install]
+WantedBy=multi-user.target
+
