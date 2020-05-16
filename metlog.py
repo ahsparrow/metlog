@@ -8,70 +8,77 @@ import time
 
 METCLOUD = "http://metcloud.freeflight.org.uk/"
 
-def init_db(dbc):
-    with dbc as c:
-        c.execute("create table metlog (ts timestamp, wind float, gust float, temp float)")
+def init_db(db_file):
+    dbc = sqlite3.connect(db_file)
+    with dbc:
+        dbc.execute("create table metlog (ts timestamp, wind float, gust float, temp float)")
 
-class MetLog:
-    def __init__(self, dbc):
-        self.dbc = dbc
-        self.min_temp = 100
-        self.max_temp = -100
-        self.max_gust = 0
+    dbc.close()
 
-    def run(self, addr, port):
-        url = "http://%s:%d/" % (addr, port)
+def metlog(db_file, sensor_url):
+    min_temp = 100
+    max_temp = -100
+    max_gust = 0
+    report_gust = 0
 
-        secs = int(time.time()) + 1
-        while 1:
-            delta = secs - time.time()
-            if delta > 0:
-                gevent.sleep(delta)
+    # Update once a minute
+    secs = (int(time.time()) // 60 + 1) * 60
+    while 1:
+        delta = secs - time.time()
+        if delta > 0:
+            gevent.sleep(delta)
 
-            if time.gmtime(secs).tm_sec == 0:
-                try:
-                    req = requests.get(url)
-                    good_req = True
-                except requests.RequestException as e:
-                    print(str(e))
-                    good_req = False
+        gmt = time.gmtime(secs)
 
-                if good_req:
-                    data = req.json()
-                    temp = data.get('temperature', 0)
-                    wind = data.get('wind_avg', 0)
-                    gust = data.get('wind_gust', 0)
+        # Reset min/max's at midnight
+        if gmt.tm_min == 0 and gmt.tm_hour == 0:
+            min_temp = 100
+            max_temp = -100
+            max_gust_day = 0
 
-                    with self.dbc as c:
-                        c.execute("insert into metlog (ts, wind, gust, temp) values (?, ?, ?, ?)",
-                                  (datetime.utcfromtimestamp(secs),
-                                   wind, gust, temp))
+        # Get met sensor data
+        try:
+            req = requests.get(sensor_url)
+            good_req = True
+        except requests.RequestException as e:
+            print(str(e))
+            good_req = False
 
-                    self.update_server(secs, temp, wind, gust)
+        if good_req:
+            data = req.json()
+            temp = data.get('temperature', 0)
+            wind = data.get('wind_avg', 0)
+            gust = data.get('wind_gust', 0)
 
-            secs += 1
+            # Update database
+            dbc = sqlite3.connect(db_file)
+            with dbc:
+                dbc.execute("insert into metlog (ts, wind, gust, temp) values (?, ?, ?, ?)",
+                            (datetime.utcfromtimestamp(secs),
+                             wind, gust, temp))
+            dbc.close()
 
-    def update_server(self, secs, temp, wind, gust):
-        self.max_temp = max(self.max_temp, temp)
-        self.min_temp = min(self.min_temp, temp)
-        self.max_gust = max(self.max_gust, gust)
+            # Update min/max
+            min_temp = min(min_temp, temp)
+            max_temp = max(max_temp, temp)
+            max_gust = max(max_gust, gust)
+            report_gust = max(report_gust, gust)
 
-        # Reset min and max
-        gt = time.gmtime(secs)
-        if gt.tm_min == 0:
-            if gt.tm_hour == 3:
-                max_temp = temp
-            if gt.tm_hour == 15:
-                min_temp = temp
+            # Update server every 15 minutes
+            if gmt.tm_min % 15 == 0:
+                update_server(temp, wind, report_gust, min_temp, max_temp,
+                              max_gust)
+                report_gust = 0
 
+        secs += 60
 
-        # Upload to server every 15 minutes
-        if gt.tm_min % 1 == 0:
-            requests.put(METCLOUD, json={'temp': temp,
-                                         'wind': wind,
-                                         'gust': self.max_gust})
-            self.max_gust = gust
-
+def update_server(temp, wind, gust, min_temp, max_temp, max_gust):
+    requests.put(METCLOUD, json={'temp': temp,
+                                 'wind': wind,
+                                 'gust': gust,
+                                 'min_temp': min_temp,
+                                 'max_temp': max_temp,
+                                 'max_gust': max_gust})
 
 if __name__ == '__main__':
     import argparse
@@ -85,12 +92,10 @@ if __name__ == '__main__':
                         help="Met sensor port")
     args = parser.parse_args()
 
-    dbc = sqlite3.connect(args.db_file)
-
     if args.init:
-        init_db(dbc)
+        init_db(args.db_file)
 
-    metlog = MetLog(dbc)
+    sensor_url = "http://%s:%d/" % (args.addr, args.port)
 
-    g = gevent.spawn(metlog.run, args.addr, args.port)
+    g = gevent.spawn(metlog, args.db_file, sensor_url)
     gevent.joinall([g])
