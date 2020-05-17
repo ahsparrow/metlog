@@ -73,12 +73,15 @@ def metlog(db_file, sensor_url):
         secs += 60
 
 def update_server(temp, wind, gust, min_temp, max_temp, max_gust):
-    requests.put(METCLOUD, json={'temp': temp,
-                                 'wind': wind,
-                                 'gust': gust,
-                                 'min_temp': min_temp,
-                                 'max_temp': max_temp,
-                                 'max_gust': max_gust})
+    try:
+        requests.put(METCLOUD, json={'temp': temp,
+                                     'wind': wind,
+                                     'gust': gust,
+                                     'min_temp': min_temp,
+                                     'max_temp': max_temp,
+                                     'max_gust': max_gust})
+    except requests.RequestException as e:
+        print(str(e))
 
 if __name__ == '__main__':
     import argparse
