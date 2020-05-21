@@ -6,12 +6,17 @@ from ds18x20 import DS18X20
 from onewire import OneWire
 
 TEMP_ONEWIRE_PIN = "PE11"
+TEMP_FAN_PIN = "PA6"
+
 WIND_ADC_PIN = "PA3"
 
 RED_LED_PIN = "PB14"
 BLUE_LED_PIN = "PB7"
 
 USER_SWITCH_PIN = "PC13"
+
+#----------------------------------------------------------------------
+# Network
 
 def init_network(led):
     from network import LAN
@@ -43,18 +48,8 @@ def init_network(led):
 
     return True
 
-async def sensor_task(wind_sensor, temperature_sensor, led):
-    count = 0
-
-    while 1:
-        wind_sensor.accumulate()
-
-        count += 1
-        if count == 50:
-            temperature_sensor.accumulate()
-            count = 0
-
-        await asyncio.sleep(0.1)
+#----------------------------------------------------------------------
+# Wind sensor
 
 class WindSensor:
     # avg_size is number of samples to combine in a measurement
@@ -94,7 +89,7 @@ class WindSensor:
             self.avg = 0
             self.avg_count = 0
 
-    def result(self):
+    def values(self):
         if self.acc_count == 0:
             wind = 0
             gust = 0
@@ -102,17 +97,29 @@ class WindSensor:
             wind = self.acc / self.acc_count
             gust = self.gust
 
+        return wind, gust
+
+    def result(self):
+        wind, gust = self.values()
+
         self.acc = 0
         self.acc_count = 0
         self.gust = 0
 
         return wind, gust
 
+#----------------------------------------------------------------------
+# Temperature sensor
+
 class TemperatureSensor:
-    def __init__(self, pin):
-        ow = OneWire(pin)
+    def __init__(self, ow_pin, fan_pin):
+        ow = OneWire(ow_pin)
         self.ds_sensor = DS18X20(ow)
         self.roms = []
+
+        fan_pin.value(0)
+        self.fan_pin = fan_pin
+        self.fan_value = 'off'
 
         self.acc = 0
         self.acc_count = 0
@@ -137,50 +144,116 @@ class TemperatureSensor:
             # Start next conversion
             self.ds_sensor.convert_temp()
 
-    def result(self):
-        # Return average value and reset accumulator
+    def value(self):
         if self.acc_count == 0:
             val = 0
         else:
             val = self.acc / self.acc_count
 
-        self.acc = 0
-        self.acc_count = 0
         return val
 
-    async def run(self):
-        while 1:
-            self.accumulate()
-            await asyncio.sleep(sel.tdelta)
+    def result(self):
+        # Return average value and reset accumulator
+        val = self.value()
+
+        self.acc = 0
+        self.acc_count = 0
+
+        return val
+
+    def set_fan(self, value):
+        if value == 'on':
+            self.fan_pin.value(1)
+            self.fan_value = 'on'
+        else:
+            self.fan_pin.value(0)
+            self.fan_value = 'off'
+
+#----------------------------------------------------------------------
+# Sensor task
+
+async def sensor_task(wind_sensor, temperature_sensor, led):
+    count = 0
+
+    while 1:
+        wind_sensor.accumulate()
+
+        count += 1
+        if count == 50:
+            temperature_sensor.accumulate()
+            count = 0
+
+        await asyncio.sleep(0.1)
+
+#----------------------------------------------------------------------
+# Simple HTTP server
+
+async def send_response(writer, msg):
+    writer.write(msg)
+    await writer.drain()
+
+    writer.close()
+    await writer.wait_closed()
 
 def make_request_handler(wind_sensor, temp_sensor, watchdog):
     async def request_handler(reader, writer):
-        data = await reader.read(500)
-        message = data.decode()
-        print("Received message")
+        req_bytes = await reader.read(500)
+        req_lines = req_bytes.strip().split(b"\r\n")
 
-        template = "HTTP/1.1 200 OK\r\n" \
-                   "Content-Type: application/json\r\n" \
-                   "Content-Length: %d\r\n" \
-                   "Connection: close\r\n" \
-                   "\r\n%s"
+        try:
+            method, path, ver = req_lines[0].decode().split()
+        except ValueError:
+            print("Bad request")
+            await send_response(writer, "HTTP/1.1 400 Bad Request\r\n")
+            return
 
-        wind, gust = wind_sensor.result()
-        results = {
-            'temp': temp_sensor.result(),
-            'wind': wind,
-            'gust': gust,
-            'up_count': watchdog.up_count,
-            'reset_cause': watchdog.reset_cause
-        }
+        print("Request:", method, path)
 
-        result_str = json.dumps(results)
+        if path == "/results":
+            wind, gust = wind_sensor.result()
+            results = {'temp': temp_sensor.result(),
+                       'wind': wind,
+                       'gust': gust}
 
-        writer.write(template % (len(result_str), result_str))
-        await writer.drain()
+        elif path == "/values":
+            wind, gust = wind_sensor.values()
+            results = {'temp': temp_sensor.value(),
+                       'wind': wind,
+                       'gust': gust,
+                       'fan': temp_sensor.fan_value,
+                       'up_count': watchdog.up_count,
+                       'reset_cause': watchdog.reset_cause}
 
-        writer.close()
-        await writer.wait_closed()
+
+        elif path == "/fan":
+            if method == "PUT":
+                if req_lines[-1] == b"fan=on":
+                    print("Fan on")
+                    temp_sensor.set_fan('on')
+                else:
+                    print("Fan off")
+                    temp_sensor.set_fan('off')
+
+                results = {'fan': temp_sensor.fan_value}
+
+            else:
+                results = None
+
+        else:
+            results = None
+
+        if results is None:
+            await send_response(writer, "HTTP/1.1 404 Not Found\r\n\r\n\r\n")
+        else:
+            template = "HTTP/1.1 200 OK\r\n" \
+                       "Content-Type: application/json\r\n" \
+                       "Content-Length: %d\r\n" \
+                       "Connection: close\r\n" \
+                       "\r\n%s"
+
+            result_str = json.dumps(results)
+            response = template % (len(result_str), result_str)
+            await send_response(writer, response)
 
     return request_handler
 
@@ -195,6 +268,9 @@ async def server_task(wind_sensor, temp_sensor, watchdog):
 
     async with server:
         await server.wait_closed()
+
+#----------------------------------------------------------------------
+# Watchdog
 
 class Watchdog():
     def __init__(self, wdt, reset_cause):
@@ -222,6 +298,8 @@ class Watchdog():
                     machine.reset()
 
             await asyncio.sleep(10)
+
+#----------------------------------------------------------------------
 
 def pymet(use_watchdog=True):
     # Get result cause
@@ -255,8 +333,9 @@ def pymet(use_watchdog=True):
     wind_pin = machine.Pin(WIND_ADC_PIN)
     wind_sensor = WindSensor(wind_pin, 10)
 
-    temp_pin = machine.Pin(TEMP_ONEWIRE_PIN)
-    temp_sensor = TemperatureSensor(temp_pin)
+    ow_pin = machine.Pin(TEMP_ONEWIRE_PIN)
+    fan_pin = machine.Pin(TEMP_FAN_PIN)
+    temp_sensor = TemperatureSensor(ow_pin, fan_pin)
     temp_sensor.scan()
 
     # Sensor task
