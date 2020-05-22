@@ -46,9 +46,9 @@ def metlog(db_file, sensor_url):
 
         if good_req:
             data = req.json()
-            temp = data.get('temperature', 0)
-            wind = data.get('wind_avg', 0)
-            gust = data.get('wind_gust', 0)
+            temp = data.get('temp', 0)
+            wind = data.get('wind', 0)
+            gust = data.get('gust', 0)
 
             # Update database
             dbc = sqlite3.connect(db_file)
@@ -98,7 +98,7 @@ if __name__ == '__main__':
     if args.init:
         init_db(args.db_file)
 
-    sensor_url = "http://%s:%d/" % (args.addr, args.port)
+    sensor_url = "http://%s:%d/results" % (args.addr, args.port)
 
     g = gevent.spawn(metlog, args.db_file, sensor_url)
     gevent.joinall([g])
