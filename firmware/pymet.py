@@ -243,6 +243,11 @@ def make_request_handler(wind_sensor, temp_sensor, watchdog):
             else:
                 results = None
 
+        elif path == "/mem":
+            import gc
+            gc.collect()
+            results =  {'alloc': gc.mem_alloc(), 'free': gc.mem_free()}
+
         else:
             results = None
 
