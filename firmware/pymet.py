@@ -188,6 +188,14 @@ async def sensor_task(wind_sensor, temperature_sensor, led):
 #----------------------------------------------------------------------
 # Simple HTTP server
 
+def set_fan(temp_sensor, req_line):
+    if req_line == b"fan=on":
+        print("Fan on")
+        temp_sensor.set_fan('on')
+    else:
+        print("Fan off")
+        temp_sensor.set_fan('off')
+
 async def send_response(writer, msg):
     writer.write(msg)
     await writer.drain()
@@ -210,12 +218,16 @@ def make_request_handler(wind_sensor, temp_sensor, watchdog):
         print("Request:", method, path)
 
         if path == "/results":
+            if method == "PUT":
+                set_fan(temp_sensor, req_lines[-1])
+
             wind, gust = wind_sensor.result()
             results = {'temp': temp_sensor.result(),
                        'wind': wind,
-                       'gust': gust}
+                       'gust': gust,
+                       'fan': temp_sensor.fan_value}
 
-        elif path == "/values":
+        elif path == "/values" or path="/":
             wind, gust = wind_sensor.values()
             results = {'temp': temp_sensor.value(),
                        'wind': wind,
@@ -224,18 +236,10 @@ def make_request_handler(wind_sensor, temp_sensor, watchdog):
                        'up_count': watchdog.up_count,
                        'reset_cause': watchdog.reset_cause}
 
-
         elif path == "/fan":
             if method == "PUT":
-                if req_lines[-1] == b"fan=on":
-                    print("Fan on")
-                    temp_sensor.set_fan('on')
-                else:
-                    print("Fan off")
-                    temp_sensor.set_fan('off')
-
+                set_fan(temp_sensor, req_lines[-1])
                 results = {'fan': temp_sensor.fan_value}
-
             else:
                 results = None
 
