@@ -219,6 +219,7 @@ def make_request_handler(wind_sensor, temp_sensor, watchdog):
             return
 
         print("Request:", method, path)
+        watchdog.server_feed()
 
         if path == "/results":
             if method == "PUT":
