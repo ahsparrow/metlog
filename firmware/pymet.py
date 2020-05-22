@@ -183,6 +183,9 @@ async def sensor_task(wind_sensor, temperature_sensor, led):
             temperature_sensor.accumulate()
             count = 0
 
+        # Blimk the led
+        led.value(0 if count % 10 else 1)
+
         await asyncio.sleep(0.1)
 
 #----------------------------------------------------------------------
