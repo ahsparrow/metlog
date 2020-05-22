@@ -227,7 +227,7 @@ def make_request_handler(wind_sensor, temp_sensor, watchdog):
                        'gust': gust,
                        'fan': temp_sensor.fan_value}
 
-        elif path == "/values" or path="/":
+        elif path == "/values" or path == "/":
             wind, gust = wind_sensor.values()
             results = {'temp': temp_sensor.value(),
                        'wind': wind,
