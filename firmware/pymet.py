@@ -3,7 +3,7 @@ import ujson as json
 import uasyncio as asyncio
 
 from ds18x20 import DS18X20
-from onewire import OneWire
+from onewire import OneWire, OneWireError
 
 TEMP_ONEWIRE_PIN = "PE11"
 TEMP_FAN_PIN = "PA6"
@@ -134,15 +134,22 @@ class TemperatureSensor:
 
     def accumulate(self):
         if self.roms:
-            t = self.ds_sensor.read_temp(self.roms[0])
-            print("Temperature:", t)
+            try:
+                t = self.ds_sensor.read_temp(self.roms[0])
+                print("Temperature:", t)
+            except OneWireError:
+                print("One-wire error")
+                t = 0
 
             # Accumulate results
             self.acc += t
             self.acc_count += 1
 
             # Start next conversion
-            self.ds_sensor.convert_temp()
+            try:
+                self.ds_sensor.convert_temp()
+            except OneWireError:
+                print("One-wire error")
 
     def value(self):
         if self.acc_count == 0:
@@ -347,7 +354,7 @@ def pymet(use_watchdog=True):
     wind_sensor = WindSensor(wind_pin, 10)
 
     ow_pin = machine.Pin(TEMP_ONEWIRE_PIN)
-    fan_pin = machine.Pin(TEMP_FAN_PIN)
+    fan_pin = machine.Pin(TEMP_FAN_PIN, machine.Pin.OUT)
     temp_sensor = TemperatureSensor(ow_pin, fan_pin)
     temp_sensor.scan()
 
