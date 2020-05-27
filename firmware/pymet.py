@@ -128,28 +128,31 @@ class TemperatureSensor:
         self.roms = self.ds_sensor.scan()
         if self.roms:
             print("Found DS devices:", self.roms)
-            self.ds_sensor.convert_temp()
+            self.convert = False
         else:
             print("No DS devices found")
 
     def accumulate(self):
         if self.roms:
-            try:
-                t = self.ds_sensor.read_temp(self.roms[0])
-                print("Temperature:", t)
-            except OneWireError:
-                print("One-wire error")
-                t = 0
+            if self.convert:
+                try:
+                    t = self.ds_sensor.read_temp(self.roms[0])
+                    print("Temperature:", t)
 
-            # Accumulate results
-            self.acc += t
-            self.acc_count += 1
+                    # Accumulate results
+                    self.acc += t
+                    self.acc_count += 1
+
+                except OneWireError:
+                    print("One-wire read error")
 
             # Start next conversion
             try:
                 self.ds_sensor.convert_temp()
+                self.convert = True
             except OneWireError:
-                print("One-wire error")
+                print("One-wire convert error")
+                self.convert  = False
 
     def value(self):
         if self.acc_count == 0:
