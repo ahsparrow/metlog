@@ -73,7 +73,7 @@ def metlog(db_file, sensor_url):
 
             # Update server every five minutes
             if gmt.tm_min % 5 == 0:
-                update_server(temp, wind, report_gust, min_temp, max_temp,
+                update_server(temp, now_wind, now_gust, min_temp, max_temp,
                               max_gust)
 
                 now_gust = 0
