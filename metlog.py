@@ -19,7 +19,10 @@ def metlog(db_file, sensor_url):
     min_temp = 100
     max_temp = -100
     max_gust = 0
-    report_gust = 0
+
+    now_gust = 0
+    now_wind_sum = 0
+    now_wind_count = 0
 
     # Update once a minute
     secs = (int(time.time()) // 60 + 1) * 60
@@ -34,7 +37,7 @@ def metlog(db_file, sensor_url):
         if gmt.tm_min == 0 and gmt.tm_hour == 0:
             min_temp = 100
             max_temp = -100
-            max_gust_day = 0
+            max_gust = 0
 
         # Get met sensor data
         try:
@@ -58,17 +61,24 @@ def metlog(db_file, sensor_url):
                              wind, gust, temp))
             dbc.close()
 
+            # Short term averages
+            now_gust = max(now_gust, gust)
+            now_wind_sum += wind
+            now_wind_count += 1
+
             # Update min/max
             min_temp = min(min_temp, temp)
             max_temp = max(max_temp, temp)
             max_gust = max(max_gust, gust)
-            report_gust = max(report_gust, gust)
 
-            # Update server every 15 minutes
-            if gmt.tm_min % 15 == 0:
+            # Update server every five minutes
+            if gmt.tm_min % 5 == 0:
                 update_server(temp, wind, report_gust, min_temp, max_temp,
                               max_gust)
-                report_gust = 0
+
+                now_gust = 0
+                now_wind_sum = 0
+                now_wind_count = 0
 
         secs += 60
 
