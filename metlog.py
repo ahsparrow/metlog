@@ -75,12 +75,12 @@ def metlog(db_file, sensor_url):
             if gmt.tm_min % 5 == 0:
                 now_wind = now_wind_sum / now_wind_count
 
+                update_server(temp, now_wind, now_gust, min_temp, max_temp,
+                              max_gust)
+
                 now_gust = 0
                 now_wind_sum = 0
                 now_wind_count = 0
-
-                update_server(temp, now_wind, now_gust, min_temp, max_temp,
-                              max_gust)
 
         secs += 60
 
