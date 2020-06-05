@@ -84,7 +84,7 @@ def metlog_task(db_file, sensor_url, sun):
             max_gust = max(max_gust, gust)
 
             # Update server every five minutes
-            if gmt.tm_min % 5 == 0:
+            if now_dt.minute % 5 == 0:
                 now_wind = now_wind_sum / now_wind_count
 
                 update_server(temp, now_wind, now_gust, min_temp, max_temp,
