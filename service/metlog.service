@@ -7,7 +7,7 @@ User=ahs
 Group=ahs
 RuntimeDirectory=metlog
 WorkingDirectory=/home/ahs/src/metlog
-ExecStart=/home/ahs/src/metlog/venv/bin/python metlog.py metsensor.lan /var/metlog/metlog.db
+ExecStart=/home/ahs/src/metlog/venv/bin/python run.py metsensor.lan /var/metlog/metlog.db
 
 [Install]
 WantedBy=multi-user.target

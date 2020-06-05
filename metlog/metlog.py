@@ -15,7 +15,7 @@ def init_db(db_file):
 
     dbc.close()
 
-def metlog(db_file, sensor_url):
+def metlog_task(db_file, sensor_url, sun):
     min_temp = 100
     max_temp = -100
     max_gust = 0
@@ -24,6 +24,9 @@ def metlog(db_file, sensor_url):
     now_wind_sum = 0
     now_wind_count = 0
 
+    sunrise_dt = sun.get_sunrise_time()
+    sunset_dt = sun.get_sunset_time()
+
     # Update once a minute
     secs = (int(time.time()) // 60 + 1) * 60
     while 1:
@@ -31,17 +34,26 @@ def metlog(db_file, sensor_url):
         if delta > 0:
             gevent.sleep(delta)
 
-        gmt = time.gmtime(secs)
+        now_dt = datetime.utcfromtimestamp(secs)
 
-        # Reset min/max's at midnight
-        if gmt.tm_min == 0 and gmt.tm_hour == 0:
+        # Reset min/max's & sun times at midnight
+        if now_dt.minute == 0 and now_dt.hour == 0:
             min_temp = 100
             max_temp = -100
             max_gust = 0
 
+            sunrise_dt = sun.get_sunrise_time()
+            sunset_dt = sun.get_sunset_time()
+
         # Get met sensor data
         try:
-            req = requests.get(sensor_url)
+            if now_dt > sunrise_dt and now_dt < sunset_dt:
+                fan = "on"
+                print(now_dt, sunrise_dt, sunset_dt)
+            else:
+                fan = "off"
+
+            req = requests.put(sensor_url, data={'fan': fan})
             good_req = True
         except requests.RequestException as e:
             print(str(e))
@@ -94,23 +106,3 @@ def update_server(temp, wind, gust, min_temp, max_temp, max_gust):
                                      'max_gust': max_gust})
     except requests.RequestException as e:
         print(str(e))
-
-if __name__ == '__main__':
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("addr", help="Met sensor address")
-    parser.add_argument("db_file", help="Database file")
-    parser.add_argument("--init", action="store_true",
-                        help="Initialise database")
-    parser.add_argument("-p", "--port", type=int, default=8000,
-                        help="Met sensor port")
-    args = parser.parse_args()
-
-    if args.init:
-        init_db(args.db_file)
-
-    sensor_url = "http://%s:%d/results" % (args.addr, args.port)
-
-    g = gevent.spawn(metlog, args.db_file, sensor_url)
-    gevent.joinall([g])
