@@ -201,8 +201,8 @@ async def sensor_task(wind_sensor, temperature_sensor, led):
 #----------------------------------------------------------------------
 # Simple HTTP server
 
-def set_fan(temp_sensor, req_line):
-    if req_line == b"fan=on":
+def set_fan(temp_sensor, contents):
+    if contents == b"fan=on":
         print("Fan on")
         temp_sensor.set_fan('on')
     else:
@@ -218,11 +218,30 @@ async def send_response(writer, msg):
 
 def make_request_handler(wind_sensor, temp_sensor, watchdog):
     async def request_handler(reader, writer):
-        req_bytes = await reader.read(500)
-        req_lines = req_bytes.strip().split(b"\r\n")
+        # Get HTTP header
+        header = []
+        line = await reader.readline()
+        while len(line) > 2:
+            header.append(line.decode().strip())
+            line = await reader.readline()
+
+        # Get content length (if any)
+        content_length = 0
+        for field in header:
+            if field.startswith("Content-Length"):
+                try:
+                    content_length = int(field.split()[1])
+                except ValueError:
+                    content_length = 0
+
+        # Read content
+        content = b""
+        while len(content) < content_length:
+            data = await reader.read(content_length - len(content))
+            content += data
 
         try:
-            method, path, ver = req_lines[0].decode().split()
+            method, path, ver = header[0].split()
         except ValueError:
             print("Bad request")
             await send_response(writer, "HTTP/1.1 400 Bad Request\r\n")
@@ -233,7 +252,7 @@ def make_request_handler(wind_sensor, temp_sensor, watchdog):
 
         if path == "/results":
             if method == "PUT":
-                set_fan(temp_sensor, req_lines[-1])
+                set_fan(temp_sensor, content)
 
             wind, gust = wind_sensor.result()
             results = {'temp': temp_sensor.result(),
@@ -252,7 +271,7 @@ def make_request_handler(wind_sensor, temp_sensor, watchdog):
 
         elif path == "/fan":
             if method == "PUT":
-                set_fan(temp_sensor, req_lines[-1])
+                set_fan(temp_sensor, content)
                 results = {'fan': temp_sensor.fan_value}
             else:
                 results = None
