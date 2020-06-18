@@ -1,6 +1,9 @@
 import machine
+import micropython
 import ujson as json
-import uasyncio as asyncio
+import utime as time
+
+from mqtt_simple import MQTTClient
 
 from ds18x20 import DS18X20
 from onewire import OneWire, OneWireError
@@ -15,16 +18,38 @@ BLUE_LED_PIN = "PB7"
 
 USER_SWITCH_PIN = "PC13"
 
+MQTT_SERVER = "192.168.1.100"
+
+class Led():
+    def __init__(self, pin=None):
+        if pin:
+            self.pin = machine.Pin(pin, machine.Pin.OUT)
+        else:
+            self.pin = None
+
+        self.val = 0
+
+    def value(self, val):
+        self.val = val
+        if self.pin:
+            self.pin.value(val)
+
+    def toggle(self):
+        if self.val == 0:
+            self.value(1)
+        else:
+            self.value(0)
+
 #----------------------------------------------------------------------
 # Network
 
-def init_network(led):
+def init_network(led=Led()):
     from network import LAN
     from utime import sleep
 
     nic = LAN()
 
-    led.on()
+    led.value(1)
     while 1:
         print("Waiting for active LAN")
         try:
@@ -33,20 +58,16 @@ def init_network(led):
         except:
             print("Error activating LAN, retrying...")
         sleep(0.5)
-    led.off()
+    led.value(0)
 
-    led_value = False
     while not nic.isconnected():
         print("Waiting for network connection...")
         sleep(0.25)
 
-        led.value(led_value)
-        led_value = not led_value
+        led.toggle()
 
-    led.off()
+    led.value(0)
     print("Network config", nic.ifconfig())
-
-    return True
 
 #----------------------------------------------------------------------
 # Wind sensor
@@ -180,138 +201,6 @@ class TemperatureSensor:
             self.fan_value = 'off'
 
 #----------------------------------------------------------------------
-# Sensor task
-
-async def sensor_task(wind_sensor, temperature_sensor, led):
-    count = 0
-
-    while 1:
-        wind_sensor.accumulate()
-
-        count += 1
-        if count == 50:
-            temperature_sensor.accumulate()
-            count = 0
-
-        # Blimk the led
-        led.value(0 if count % 10 else 1)
-
-        await asyncio.sleep(0.1)
-
-#----------------------------------------------------------------------
-# Simple HTTP server
-
-def set_fan(temp_sensor, contents):
-    if contents == b"fan=on":
-        print("Fan on")
-        temp_sensor.set_fan('on')
-    else:
-        print("Fan off")
-        temp_sensor.set_fan('off')
-
-async def send_response(writer, msg):
-    writer.write(msg)
-    await writer.drain()
-
-    writer.close()
-    await writer.wait_closed()
-
-def make_request_handler(wind_sensor, temp_sensor, watchdog):
-    async def request_handler(reader, writer):
-        # Get HTTP header
-        header = []
-        line = await reader.readline()
-        while len(line) > 2:
-            header.append(line.decode().strip())
-            line = await reader.readline()
-
-        # Get content length (if any)
-        content_length = 0
-        for field in header:
-            if field.startswith("Content-Length"):
-                try:
-                    content_length = int(field.split()[1])
-                except ValueError:
-                    content_length = 0
-
-        # Read content
-        content = b""
-        while len(content) < content_length:
-            data = await reader.read(content_length - len(content))
-            content += data
-
-        try:
-            method, path, ver = header[0].split()
-        except ValueError:
-            print("Bad request")
-            await send_response(writer, "HTTP/1.1 400 Bad Request\r\n")
-            return
-
-        print("Request:", method, path)
-        watchdog.server_feed()
-
-        if path == "/results":
-            if method == "PUT":
-                set_fan(temp_sensor, content)
-
-            wind, gust = wind_sensor.result()
-            results = {'temp': temp_sensor.result(),
-                       'wind': wind,
-                       'gust': gust,
-                       'fan': temp_sensor.fan_value}
-
-        elif path == "/values" or path == "/":
-            wind, gust = wind_sensor.values()
-            results = {'temp': temp_sensor.value(),
-                       'wind': wind,
-                       'gust': gust,
-                       'fan': temp_sensor.fan_value,
-                       'up_count': watchdog.up_count,
-                       'reset_cause': watchdog.reset_cause}
-
-        elif path == "/fan":
-            if method == "PUT":
-                set_fan(temp_sensor, content)
-                results = {'fan': temp_sensor.fan_value}
-            else:
-                results = None
-
-        elif path == "/mem":
-            import gc
-            gc.collect()
-            results =  {'alloc': gc.mem_alloc(), 'free': gc.mem_free()}
-
-        else:
-            results = None
-
-        if results is None:
-            await send_response(writer, "HTTP/1.1 404 Not Found\r\n\r\n\r\n")
-        else:
-            template = "HTTP/1.1 200 OK\r\n" \
-                       "Content-Type: application/json\r\n" \
-                       "Content-Length: %d\r\n" \
-                       "Connection: close\r\n" \
-                       "\r\n%s"
-
-            result_str = json.dumps(results)
-            response = template % (len(result_str), result_str)
-            await send_response(writer, response)
-
-    return request_handler
-
-async def server_task(wind_sensor, temp_sensor, watchdog):
-    server = await asyncio.wait_for(
-            asyncio.start_server(
-                make_request_handler(wind_sensor, temp_sensor, watchdog),
-                '0.0.0.0',
-                8000),
-            None)
-    print('Serving...')
-
-    async with server:
-        await server.wait_closed()
-
-#----------------------------------------------------------------------
 # Watchdog
 
 class Watchdog():
@@ -325,21 +214,107 @@ class Watchdog():
     def server_feed(self):
         self.server_count = 0
 
-    async def run(self):
-        while 1:
-            self.up_count += 1
+    def feed(self):
+        self.up_count += 1
 
-            # Feed the watchdog
-            if self.wdt is not None:
-                self.wdt.feed()
+        # Feed the watchdog
+        if self.wdt is not None:
+            self.wdt.feed()
 
-                # Reset after 5 minutes if no server queries received
-                self.server_count += 1
-                if self.server_count > 30:
-                    print("Server watchdog reset")
-                    machine.reset()
+            # Reset after 5 minutes if no server queries received
+            self.server_count += 1
+            if self.server_count > 30:
+                print("Server watchdog reset")
+                machine.reset()
 
-            await asyncio.sleep(10)
+#----------------------------------------------------------------------
+
+class MetSensor:
+    def __init__(self, temperature_sensor, wind_sensor, led, mqtt, watchdog):
+        self.temperature_sensor = temperature_sensor
+        self.wind_sensor = wind_sensor
+        self.led = led
+        self.mqtt = mqtt
+        self.watchdog = watchdog
+
+        self.count = 0
+
+        # Seconds from midnight GMT
+        self.sunrise = 21600
+        self.sunset = 64800
+
+    def start(self, timer):
+        self.mqtt.set_callback(self.mqtt_callback)
+        self.mqtt.connect()
+        self.mqtt.subscribe(b"metlog/#")
+
+        self.timer_cb_ref = self.timer_cb
+        timer.init(mode=machine.Timer.PERIODIC, period= 100,
+                   callback=self.timer_cb_ref)
+
+    def timer_isr(self, t):
+        micropython.schedule(self.timer_cb_ref)
+
+    def timer_cb(self, arg):
+        self.count += 1
+
+        # Wind accumulates every 100ms
+        self.wind_sensor.accumulate()
+
+        if self.count % 50 == 0:
+            # Temperature accumulates every 5s
+            self.temperature_sensor.accumulate()
+
+        # Blink the LED
+        self.led.value(0 if self.count % 10 else 1)
+
+        # Publish results once a minute
+        if self.count == 600:
+            wind, gust = self.wind_sensor.result()
+            results = {'wind': wind,
+                       'gust': gust,
+                       'temp': self.temperature_sensor.value(),
+                       'reset_cause': self.watchdog.reset_cause,
+                       'up_count': self.watchdog.up_count,
+                       'fan': self.temperature_sensor.fan_value}
+
+            print("Publish:", results)
+            self.mqtt.publish(b"metsensor/results",
+                              json.dumps(results).encode('utf-8'))
+
+            self.count = 0
+
+        # Check for incoming MQTT data
+        self.mqtt.check_msg()
+
+        # Watchdog
+        if self.count % 100 == 0:
+            self.watchdog.feed()
+
+    def mqtt_callback(self, topic, msg):
+        self.watchdog.server_feed()
+
+        parts = topic.split(b'/')
+        if len(parts) != 2:
+            return
+
+        try:
+            if parts[1] == b'sunrise':
+                self.sunrise = int(msg)
+
+            elif parts[1] == b'sunset':
+                self.sunset = int(msg)
+
+            elif parts[1] == b'time':
+                tim = int(msg)
+
+                if tim >= self.sunrise and tim < self.sunset:
+                    self.temperature_sensor.set_fan('on')
+                else:
+                    self.temperature_sensor.set_fan('off')
+
+        except ValueError:
+            print("ValueError:", topic, msg)
 
 #----------------------------------------------------------------------
 
@@ -350,8 +325,6 @@ def pymet(use_watchdog=True):
 
     # Set up watchdog timer (30 second timeout)
     if use_watchdog:
-        import utime as time
-
         pin = machine.Pin(USER_SWITCH_PIN, machine.Pin.IN)
         print("Hold USER button to disable watchdog...")
 
@@ -365,10 +338,9 @@ def pymet(use_watchdog=True):
         wdt = None
 
     watchdog = Watchdog(wdt, reset_cause)
-    watchdog_aw = watchdog.run()
 
     # Start network
-    led = machine.Pin(RED_LED_PIN, machine.Pin.OUT)
+    led = Led(RED_LED_PIN)
     init_network(led)
 
     # Initialise sensors
@@ -377,14 +349,24 @@ def pymet(use_watchdog=True):
 
     ow_pin = machine.Pin(TEMP_ONEWIRE_PIN)
     fan_pin = machine.Pin(TEMP_FAN_PIN, machine.Pin.OUT)
-    temp_sensor = TemperatureSensor(ow_pin, fan_pin)
-    temp_sensor.scan()
+    temperature_sensor = TemperatureSensor(ow_pin, fan_pin)
+    temperature_sensor.scan()
 
-    # Sensor task
-    sensor_led = machine.Pin(BLUE_LED_PIN, machine.Pin.OUT)
-    sensor_aw = sensor_task(wind_sensor, temp_sensor, sensor_led)
+    # Create sensor task
+    sensor_led = Led(BLUE_LED_PIN)
+    mqtt = MQTTClient("metsensor", MQTT_SERVER)
 
-    asyncio.run(asyncio.gather(
-        sensor_aw,
-        watchdog_aw,
-        server_task(wind_sensor, temp_sensor, watchdog)))
+    metsensor = MetSensor(temperature_sensor, wind_sensor, sensor_led,
+                          mqtt, watchdog)
+
+    timer = machine.Timer(-1)
+    metsensor.start(timer)
+
+    print("Press CTRL-C to exit...")
+    try:
+        while 1:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        timer.deinit()
+
+    return metsensor
