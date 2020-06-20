@@ -52,7 +52,6 @@ class MqttClient:
 
     def on_message(self, client, topic, payload, qos, properties):
         result = json.loads(payload)
-        print(result)
 
         ts = datetime.utcfromtimestamp(round(time.time()))
         temp = result.get('temp', 0)
