@@ -221,9 +221,9 @@ class Watchdog():
         if self.wdt is not None:
             self.wdt.feed()
 
-            # Reset after 5 minutes if no server queries received
+            # Reset after 10 minutes if no messages received
             self.server_count += 1
-            if self.server_count > 30:
+            if self.server_count > 60:
                 print("Server watchdog reset")
                 machine.reset()
 
@@ -273,7 +273,7 @@ class MetSensor:
             wind, gust = self.wind_sensor.result()
             results = {'wind': wind,
                        'gust': gust,
-                       'temp': self.temperature_sensor.value(),
+                       'temp': self.temperature_sensor.result(),
                        'reset_cause': self.watchdog.reset_cause,
                        'up_count': self.watchdog.up_count,
                        'fan': self.temperature_sensor.fan_value}
