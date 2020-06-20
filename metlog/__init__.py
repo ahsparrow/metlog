@@ -1,2 +1,2 @@
-from .metlog import metlog_task, init_db
+from .metlog import MqttClient, ask_exit, init_db
 from .suntime import Sun

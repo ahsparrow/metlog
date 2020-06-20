@@ -1,5 +1,9 @@
-import gevent
-from metlog import Sun, init_db, metlog_task
+import asyncio
+import signal
+
+import gmqtt
+
+from metlog import MqttClient, Sun, ask_exit, init_db
 
 if __name__ == '__main__':
     import argparse
@@ -9,17 +13,18 @@ if __name__ == '__main__':
     parser.add_argument("db_file", help="Database file")
     parser.add_argument("--init", action="store_true",
                         help="Initialise database")
-    parser.add_argument("-p", "--port", type=int, default=8000,
-                        help="Met sensor port")
     args = parser.parse_args()
 
     if args.init:
         init_db(args.db_file)
 
-    sensor_url = "http://%s:%d/results" % (args.addr, args.port)
-
     sun = Sun(51.0, -1.6)
 
-    g = gevent.spawn(metlog_task, args.db_file, sensor_url, sun)
-    gevent.joinall([g])
+    mqtt = gmqtt.Client('metlog')
+    mqtt_client = MqttClient(mqtt, args.db_file, sun)
 
+    loop = asyncio.get_event_loop()
+    loop.add_signal_handler(signal.SIGINT, ask_exit)
+    loop.add_signal_handler(signal.SIGTERM, ask_exit)
+
+    loop.run_until_complete(mqtt_client.main(args.addr))
