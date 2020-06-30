@@ -9,7 +9,7 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("addr", help="Met sensor address")
+    parser.add_argument("mqtt", help="MQTT broker address")
     parser.add_argument("db_file", help="Database file")
     parser.add_argument("--init", action="store_true",
                         help="Initialise database")
@@ -27,4 +27,4 @@ if __name__ == '__main__':
     loop.add_signal_handler(signal.SIGINT, ask_exit)
     loop.add_signal_handler(signal.SIGTERM, ask_exit)
 
-    loop.run_until_complete(mqtt_client.main(args.addr))
+    loop.run_until_complete(mqtt_client.main(args.mqtt))
