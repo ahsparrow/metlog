@@ -11,4 +11,4 @@ ExecStart=/home/ahs/src/metlog/venv/bin/python run.py rpi.lan /var/metlog/metlog
 
 [Install]
 WantedBy=multi-user.target
-
+After=mosquitto.service
