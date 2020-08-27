@@ -1,6 +1,7 @@
 import machine
 import micropython
 import ujson as json
+import uos as os
 import utime as time
 
 from mqtt_simple import MQTTClient
@@ -13,12 +14,27 @@ TEMP_FAN_PIN = "PA6"
 
 WIND_ADC_PIN = "PA3"
 
-RED_LED_PIN = "PB14"
 BLUE_LED_PIN = "PB7"
 
-USER_SWITCH_PIN = "PC13"
-
 MQTT_SERVER = "192.168.1.100"
+
+NOSTART_FILE = "/flash/nostart"
+
+def is_nostart(reset):
+    try:
+        f = open(NOSTART_FILE)
+        f.close
+        ret = True
+    except OSError:
+        return False
+
+    if reset:
+        try:
+            os.remove(NOSTART_FILE)
+        except OSError:
+            pass
+
+    return ret
 
 class Led():
     def __init__(self, pin=None):
@@ -39,35 +55,6 @@ class Led():
             self.value(1)
         else:
             self.value(0)
-
-#----------------------------------------------------------------------
-# Network
-
-def init_network(led=Led()):
-    from network import LAN
-    from utime import sleep
-
-    nic = LAN()
-
-    led.value(1)
-    while 1:
-        print("Waiting for active LAN")
-        try:
-            nic.active(True)
-            break
-        except:
-            print("Error activating LAN, retrying...")
-        sleep(0.5)
-    led.value(0)
-
-    while not nic.isconnected():
-        print("Waiting for network connection...")
-        sleep(0.25)
-
-        led.toggle()
-
-    led.value(0)
-    print("Network config", nic.ifconfig())
 
 #----------------------------------------------------------------------
 # Wind sensor
@@ -313,35 +300,24 @@ class MetSensor:
                 else:
                     self.temperature_sensor.set_fan('off')
 
+            elif parts[1] == b'repl':
+                # Restart board without running program to allow WebREPL
+                f = open(NOSTART_FILE, "w")
+                f.close()
+
+                machine.reset()
+
         except ValueError:
             print("ValueError:", topic, msg)
 
 #----------------------------------------------------------------------
 
-def pymet(use_watchdog=True):
+def pymet(wdt):
     # Get result cause
     reset_cause = machine.reset_cause()
     print("Reset cause:", reset_cause)
 
-    # Set up watchdog timer (30 second timeout)
-    if use_watchdog:
-        pin = machine.Pin(USER_SWITCH_PIN, machine.Pin.IN)
-        print("Hold USER button to disable watchdog...")
-
-        time.sleep(1)
-        if pin.value():
-            print("Watchdog disabled")
-            wdt = None
-        else:
-            wdt = machine.WDT(timeout=30000)
-    else:
-        wdt = None
-
     watchdog = Watchdog(wdt, reset_cause)
-
-    # Start network
-    led = Led(RED_LED_PIN)
-    init_network(led)
 
     # Initialise sensors
     wind_pin = machine.Pin(WIND_ADC_PIN)
