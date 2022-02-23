@@ -114,6 +114,10 @@ class MqttClient:
         sunrise_secs = sunrise.hour * 3600 + sunrise.minute * 60
         sunset_secs = sunset.hour * 3600 + sunset.minute * 60
 
+        # XXX Disable fan in met sensor
+        sunrise_secs = 0
+        sunset_secs = 0
+
         self.mqtt.publish("metlog/sunrise", str(sunrise_secs), qos=1, retain=True)
         self.mqtt.publish("metlog/sunset", str(sunset_secs), qos=1, retain=True)
 
